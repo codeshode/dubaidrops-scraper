@@ -81,6 +81,7 @@ def fetch_page(area_id, listing_type_code, page=1):
 
 def extract_listing(prop, area_name, listing_type):
     p = prop.get("property", prop)
+
     try:
         price = int(str(p.get("price", {}).get("value", "0")).replace(",", "").replace("AED", "").strip())
     except:
@@ -102,20 +103,55 @@ def extract_listing(prop, area_name, listing_type):
     except:
         sqft = None
 
+    try:
+        beds = int(p.get("bedrooms_value")) if p.get("bedrooms_value") not in [None, "", "Studio"] else (0 if p.get("bedrooms_value") == "Studio" else None)
+    except:
+        beds = None
+
+    try:
+        baths = int(p.get("bathrooms_value")) if p.get("bathrooms_value") not in [None, ""] else None
+    except:
+        baths = None
+
+    prop_type_raw = p.get("property_type", {})
+    if isinstance(prop_type_raw, dict):
+        property_type = prop_type_raw.get("slug") or prop_type_raw.get("name")
+    else:
+        property_type = str(prop_type_raw) if prop_type_raw else None
+
+    furnished_raw = p.get("furnished")
+    if isinstance(furnished_raw, dict):
+        furnished = furnished_raw.get("slug") or furnished_raw.get("name")
+    else:
+        furnished = str(furnished_raw) if furnished_raw else None
+
+    completion_raw = p.get("completion_status") or p.get("is_off_plan")
+    if completion_raw is True:
+        completion_status = "off-plan"
+    elif completion_raw is False:
+        completion_status = "ready"
+    else:
+        completion_status = None
+
     details_path = p.get("details_path", "")
 
     return {
-        "external_id":    external_id + f"_{listing_type}",
-        "source":         "propertyfinder",
-        "source_url":     "https://www.propertyfinder.ae" + details_path,
-        "title":          p.get("title", ""),
-        "area_name":      area_name,
-        "price_aed":      price,
-        "sqft":           sqft,
-        "image_url":      image_url,
-        "listing_type":   listing_type,
-        "is_active":      True,
-        "last_scraped":   datetime.now(timezone.utc).isoformat(),
+        "external_id":        external_id + f"_{listing_type}",
+        "source":             "propertyfinder",
+        "source_url":         "https://www.propertyfinder.ae" + details_path,
+        "title":              p.get("title", ""),
+        "area_name":          area_name,
+        "price_aed":          price,
+        "sqft":               sqft,
+        "beds":               beds,
+        "baths":              baths,
+        "property_type":      property_type,
+        "furnished":          furnished,
+        "completion_status":  completion_status,
+        "image_url":          image_url,
+        "listing_type":       listing_type,
+        "is_active":          True,
+        "last_scraped":       datetime.now(timezone.utc).isoformat(),
     }
 
 def scrape_area(area_name, area_id, listing_type, listing_type_code):
