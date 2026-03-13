@@ -17,16 +17,21 @@ AREAS = {
     "Zabeel":             100,
 }
 
+LISTING_TYPES = {
+    "sale":   2,
+    "rental": 1,
+}
+
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.5",
 }
 
-def fetch_page(area_id, page=1):
+def fetch_page(area_id, listing_type_code, page=1):
     url = (
         f"https://www.propertyfinder.ae/en/search?"
-        f"c=2&fu=0&ob=mr&page={page}&l={area_id}&rp=y"
+        f"c={listing_type_code}&fu=0&ob=mr&page={page}&l={area_id}&rp=y"
     )
     req = urllib.request.Request(url, headers=HEADERS)
     with urllib.request.urlopen(req, timeout=15) as resp:
@@ -59,7 +64,7 @@ def fetch_page(area_id, page=1):
     except:
         return []
 
-def extract_listing(prop, area_name):
+def extract_listing(prop, area_name, listing_type):
     p = prop.get("property", prop)
     try:
         price = int(str(p.get("price", {}).get("value", "0")).replace(",", "").replace("AED", "").strip())
@@ -85,30 +90,31 @@ def extract_listing(prop, area_name):
     details_path = p.get("details_path", "")
 
     return {
-        "external_id":  external_id,
-        "source":       "propertyfinder",
-        "source_url":   "https://www.propertyfinder.ae" + details_path,
-        "title":        p.get("title", ""),
-        "area_name":    area_name,
-        "price_aed":    price,
-        "sqft":         sqft,
-        "image_url":    image_url,
-        "is_active":    True,
-        "last_scraped": datetime.now(timezone.utc).isoformat(),
+        "external_id":    external_id + f"_{listing_type}",
+        "source":         "propertyfinder",
+        "source_url":     "https://www.propertyfinder.ae" + details_path,
+        "title":          p.get("title", ""),
+        "area_name":      area_name,
+        "price_aed":      price,
+        "sqft":           sqft,
+        "image_url":      image_url,
+        "listing_type":   listing_type,
+        "is_active":      True,
+        "last_scraped":   datetime.now(timezone.utc).isoformat(),
     }
 
-def scrape_area(area_name, area_id):
-    print(f"Scraping {area_name}...")
+def scrape_area(area_name, area_id, listing_type, listing_type_code):
+    print(f"Scraping {area_name} ({listing_type})...")
     all_listings = []
     page = 1
 
     while True:
-        props = fetch_page(area_id, page)
+        props = fetch_page(area_id, listing_type_code, page)
         if not props:
             break
 
         for prop in props:
-            listing = extract_listing(prop, area_name)
+            listing = extract_listing(prop, area_name, listing_type)
             if listing:
                 all_listings.append(listing)
 
@@ -126,7 +132,7 @@ def deduplicate(listings):
     seen = {}
     for listing in listings:
         key = listing["external_id"]
-        seen[key] = listing  # last one wins
+        seen[key] = listing
     return list(seen.values())
 
 def upsert_listings(listings):
@@ -164,10 +170,11 @@ def main():
     all_listings = []
 
     try:
-        for area_name, area_id in AREAS.items():
-            listings = scrape_area(area_name, area_id)
-            all_listings.extend(listings)
-            time.sleep(2)
+        for listing_type, listing_type_code in LISTING_TYPES.items():
+            for area_name, area_id in AREAS.items():
+                listings = scrape_area(area_name, area_id, listing_type, listing_type_code)
+                all_listings.extend(listings)
+                time.sleep(2)
 
         total = upsert_listings(all_listings)
         print(f"Upserted {total} listings")
