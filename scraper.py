@@ -59,7 +59,7 @@ def fetch_page(area_id, page=1):
     except:
         return []
 
-def extract_listing(prop):
+def extract_listing(prop, area_name):
     p = prop.get("property", prop)
     try:
         price = int(str(p.get("price", {}).get("value", "0")).replace(",", "").replace("AED", "").strip())
@@ -72,16 +72,25 @@ def extract_listing(prop):
     images = p.get("images", [])
     image_url = images[0].get("medium") if images else None
 
+    size_val = p.get("size", {}).get("value")
+    try:
+        sqft = float(size_val) if size_val else None
+    except:
+        sqft = None
+
+    details_path = p.get("details_path", "")
+
     return {
-        "external_id": str(p.get("id", "")),
-        "title": p.get("title", ""),
-        "price_aed": price,
-        "size_sqft": p.get("size", {}).get("value"),
-        "location": p.get("location", {}).get("path_name", ""),
-        "listing_url": "https://www.propertyfinder.ae" + p.get("details_path", ""),
-        "image_url": image_url,
-        "source": "propertyfinder",
-        "is_active": True,
+        "external_id":  str(p.get("id", "")),
+        "source":       "propertyfinder",
+        "source_url":   "https://www.propertyfinder.ae" + details_path,
+        "title":        p.get("title", ""),
+        "area_name":    area_name,
+        "price_aed":    price,
+        "sqft":         sqft,
+        "image_url":    image_url,
+        "is_active":    True,
+        "last_scraped": datetime.now(timezone.utc).isoformat(),
     }
 
 def scrape_area(area_name, area_id):
@@ -95,7 +104,7 @@ def scrape_area(area_name, area_id):
             break
 
         for prop in props:
-            listing = extract_listing(prop)
+            listing = extract_listing(prop, area_name)
             if listing:
                 all_listings.append(listing)
 
@@ -119,17 +128,18 @@ def upsert_listings(listings):
         batch = listings[i:i+batch_size]
         supabase.table("listings").upsert(
             batch,
-            on_conflict="external_id"
+            on_conflict="external_id,source"
         ).execute()
         total += len(batch)
 
     return total
 
-def log_run(total_scraped, status):
+def log_run(total, status):
     try:
         supabase.table("scraper_runs").insert({
-            "listings_scraped": total_scraped,
             "status": status,
+            "listings_found": total,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
         }).execute()
     except Exception as e:
         print(f"Log run failed (non-fatal): {e}")
@@ -151,7 +161,7 @@ def main():
 
     except Exception as e:
         print(f"Error: {e}")
-        log_run(len(all_listings), "error")
+        log_run(len(all_listings), "failed")
         raise
 
 if __name__ == "__main__":
