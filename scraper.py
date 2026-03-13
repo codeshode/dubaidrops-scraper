@@ -10,11 +10,28 @@ SUPABASE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 AREAS = {
-    "Dubai Marina":       50,
-    "Dubai Hills Estate": 105,
-    "Dubai Sports City":  55,
-    "Al Barari":          12,
-    "Zabeel":             100,
+  AREAS = {
+    "Dubai Marina":           50,
+    "Dubai Hills Estate":     105,
+    "Dubai Sports City":      55,
+    "Al Barari":              12,
+    "Zabeel":                 100,
+    "Downtown Dubai":         6,
+    "Business Bay":           18,
+    "Jumeirah Village Circle": 82,
+    "Jumeirah Lake Towers":   77,
+    "DIFC":                   28,
+    "Deira":                  25,
+    "Bur Dubai":              20,
+    "Palm Jumeirah":          38,
+    "Arabian Ranches":        4,
+    "Mirdif":                 63,
+    "Al Barsha":              8,
+    "Dubai Silicon Oasis":    54,
+    "Jumeirah Beach Residence": 46,
+    "Motor City":             65,
+    "Dubai South":            116,
+}
 }
 
 LISTING_TYPES = {
