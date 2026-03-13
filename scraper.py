@@ -82,7 +82,6 @@ def extract_listing(prop):
         "image_url": image_url,
         "source": "propertyfinder",
         "is_active": True,
-        "last_seen_at": datetime.now(timezone.utc).isoformat(),
     }
 
 def scrape_area(area_name, area_id):
@@ -127,11 +126,13 @@ def upsert_listings(listings):
     return total
 
 def log_run(total_scraped, status):
-    supabase.table("scraper_runs").insert({
-        "run_at": datetime.now(timezone.utc).isoformat(),
-        "listings_scraped": total_scraped,
-        "status": status,
-    }).execute()
+    try:
+        supabase.table("scraper_runs").insert({
+            "listings_scraped": total_scraped,
+            "status": status,
+        }).execute()
+    except Exception as e:
+        print(f"Log run failed (non-fatal): {e}")
 
 def main():
     start = datetime.now(timezone.utc)
