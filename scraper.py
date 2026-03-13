@@ -69,6 +69,10 @@ def extract_listing(prop, area_name):
     if price == 0:
         return None
 
+    external_id = str(p.get("id", ""))
+    if not external_id:
+        return None
+
     images = p.get("images", [])
     image_url = images[0].get("medium") if images else None
 
@@ -81,7 +85,7 @@ def extract_listing(prop, area_name):
     details_path = p.get("details_path", "")
 
     return {
-        "external_id":  str(p.get("id", "")),
+        "external_id":  external_id,
         "source":       "propertyfinder",
         "source_url":   "https://www.propertyfinder.ae" + details_path,
         "title":        p.get("title", ""),
@@ -118,9 +122,19 @@ def scrape_area(area_name, area_id):
 
     return all_listings
 
+def deduplicate(listings):
+    seen = {}
+    for listing in listings:
+        key = listing["external_id"]
+        seen[key] = listing  # last one wins
+    return list(seen.values())
+
 def upsert_listings(listings):
     if not listings:
         return 0
+
+    listings = deduplicate(listings)
+    print(f"After dedup: {len(listings)} unique listings")
 
     batch_size = 50
     total = 0
