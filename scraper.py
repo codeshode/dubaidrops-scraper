@@ -76,8 +76,6 @@ def extract_listing(prop):
         "external_id": str(p.get("id", "")),
         "title": p.get("title", ""),
         "price_aed": price,
-        "bedrooms": p.get("bedrooms_value"),
-        "bathrooms": p.get("bathrooms_value"),
         "size_sqft": p.get("size", {}).get("value"),
         "location": p.get("location", {}).get("path_name", ""),
         "listing_url": "https://www.propertyfinder.ae" + p.get("details_path", ""),
@@ -128,12 +126,11 @@ def upsert_listings(listings):
 
     return total
 
-def log_run(total_scraped, status, error_msg=None):
+def log_run(total_scraped, status):
     supabase.table("scraper_runs").insert({
         "run_at": datetime.now(timezone.utc).isoformat(),
         "listings_scraped": total_scraped,
         "status": status,
-        "error_message": error_msg,
     }).execute()
 
 def main():
@@ -153,7 +150,7 @@ def main():
 
     except Exception as e:
         print(f"Error: {e}")
-        log_run(len(all_listings), "error", str(e))
+        log_run(len(all_listings), "error")
         raise
 
 if __name__ == "__main__":
