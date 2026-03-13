@@ -1,5 +1,4 @@
 import urllib.request
-import urllib.parse
 import json
 import time
 import os
@@ -60,7 +59,7 @@ def fetch_page(area_id, page=1):
     except:
         return []
 
-def extract_listing(prop, area_name):
+def extract_listing(prop):
     p = prop.get("property", prop)
     try:
         price = int(str(p.get("price", {}).get("value", "0")).replace(",", "").replace("AED", "").strip())
@@ -81,7 +80,6 @@ def extract_listing(prop, area_name):
         "bathrooms": p.get("bathrooms_value"),
         "size_sqft": p.get("size", {}).get("value"),
         "location": p.get("location", {}).get("path_name", ""),
-        "area": area_name,
         "listing_url": "https://www.propertyfinder.ae" + p.get("details_path", ""),
         "image_url": image_url,
         "source": "propertyfinder",
@@ -100,7 +98,7 @@ def scrape_area(area_name, area_id):
             break
 
         for prop in props:
-            listing = extract_listing(prop, area_name)
+            listing = extract_listing(prop)
             if listing:
                 all_listings.append(listing)
 
