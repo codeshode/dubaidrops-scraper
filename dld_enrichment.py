@@ -55,12 +55,30 @@ def fetch_dld_transactions(area_id_str, from_date, to_date, take=200):
 
     try:
         r = urllib.request.urlopen(req, timeout=15, context=ctx)
-        data = json.loads(r.read().decode("utf-8"))
-        if data.get("responseCode") == 200:
-            return data.get("response", {}).get("result", [])
-        else:
-            print(f"  DLD error for {area_id_str}: {data.get('responseCode')}")
-            return []
+        raw = r.read().decode("utf-8")
+        print(f"  DLD raw response (first 300 chars): {raw[:300]}")
+        data = json.loads(raw)
+        print(f"  DLD responseCode: {data.get('responseCode')}")
+
+        # Accept any response that has a result list
+        response = data.get("response") or {}
+        result = response.get("result") or []
+
+        if result:
+            print(f"  DLD returned {len(result)} records")
+            return result
+
+        # Also try top-level result
+        top_result = data.get("result") or []
+        if top_result:
+            print(f"  DLD returned {len(top_result)} top-level records")
+            return top_result
+
+        print(f"  DLD no result found. Full keys: {list(data.keys())}")
+        if response:
+            print(f"  Response keys: {list(response.keys())}")
+        return []
+
     except Exception as e:
         print(f"  DLD fetch error for {area_id_str}: {e}")
         return []
@@ -83,15 +101,15 @@ def process_area(area_name, dld_area_id, from_date, to_date):
         print(f"  No transactions found for {area_name}")
         return None
 
-    print(f"  Found {len(transactions)} transactions")
+    print(f"  Processing {len(transactions)} transactions...")
 
     price_per_sqft_values = []
     price_per_sqm_values = []
 
     for t in transactions:
         try:
-            trans_value = float(t.get("TRANS_VALUE", 0) or 0)
-            actual_area = float(t.get("ACTUAL_AREA", 0) or 0)
+            trans_value = float(t.get("TRANS_VALUE") or t.get("transValue") or 0)
+            actual_area = float(t.get("ACTUAL_AREA") or t.get("actualArea") or 0)
             if trans_value > 0 and actual_area > 0:
                 price_per_sqm = trans_value / actual_area
                 price_per_sqft = price_per_sqm / 10.764
@@ -102,13 +120,17 @@ def process_area(area_name, dld_area_id, from_date, to_date):
             continue
 
     if not price_per_sqft_values:
+        # Print sample transaction to debug field names
+        if transactions:
+            print(f"  Sample transaction keys: {list(transactions[0].keys())}")
+            print(f"  Sample transaction: {json.dumps(transactions[0])[:300]}")
         print(f"  No valid price/sqft data for {area_name}")
         return None
 
     median_sqft = round(calculate_median(price_per_sqft_values), 2)
     median_sqm = round(calculate_median(price_per_sqm_values), 2)
     avg_sqm = round(sum(price_per_sqm_values) / len(price_per_sqm_values), 2)
-    total_value = sum(float(t.get("TRANS_VALUE", 0) or 0) for t in transactions)
+    total_value = sum(float(t.get("TRANS_VALUE") or t.get("transValue") or 0) for t in transactions)
 
     print(f"  Median: AED {median_sqft}/sqft ({len(price_per_sqft_values)} valid txns)")
 
@@ -125,13 +147,13 @@ def get_area_id_from_db(area_name):
         result = supabase.table("areas").select("id").eq("name", area_name).execute()
         if result.data:
             return result.data[0]["id"]
-    except:
-        pass
+    except Exception as e:
+        print(f"  DB error: {e}")
     return None
 
 def upsert_dld_benchmark(area_id, stats, today_date):
     try:
-        supabase.table("dld_benchmarks").upsert({
+        result = supabase.table("dld_benchmarks").upsert({
             "area_id":           area_id,
             "property_type":     "Residential",
             "beds":              "All",
@@ -141,57 +163,8 @@ def upsert_dld_benchmark(area_id, stats, today_date):
             "avg_price_sqm":     stats["avg_sqm"],
             "total_value_aed":   stats["total_value"],
         }, on_conflict="area_id,property_type,beds,transaction_date").execute()
+        print(f"  Benchmark upsert result: {result}")
     except Exception as e:
         print(f"  Failed to save benchmark: {e}")
 
-def update_listings_median(area_name, median_sqft):
-    try:
-        supabase.table("listings").update({
-            "dld_median_sqft": median_sqft
-        }).eq("area_name", area_name).eq("is_active", True).execute()
-        print(f"  Updated listings in {area_name} with AED {median_sqft}/sqft")
-    except Exception as e:
-        print(f"  Failed to update listings: {e}")
-
-def main():
-    start = datetime.now(timezone.utc)
-    print(f"DLD enrichment started at {start.isoformat()}")
-
-    today = datetime.now()
-    to_date = today.strftime("%m/%d/%Y")
-    from_date = (today - timedelta(days=90)).strftime("%m/%d/%Y")
-    today_date = today.strftime("%Y-%m-%d")
-
-    print(f"Date range: {from_date} to {to_date}\n")
-
-    success_count = 0
-    fail_count = 0
-
-    for area in AREA_MAP:
-        area_name = area["area_name"]
-        dld_area_id = area["dld_area_id"]
-
-        print(f"\nProcessing {area_name}...")
-
-        area_id = get_area_id_from_db(area_name)
-        if not area_id:
-            print(f"  Not found in areas table: {area_name}")
-            fail_count += 1
-            continue
-
-        stats = process_area(area_name, dld_area_id, from_date, to_date)
-
-        if stats:
-            upsert_dld_benchmark(area_id, stats, today_date)
-            update_listings_median(area_name, stats["median_sqft"])
-            success_count += 1
-        else:
-            fail_count += 1
-
-        time.sleep(1)
-
-    elapsed = (datetime.now(timezone.utc) - start).seconds
-    print(f"\nDLD enrichment complete: {success_count} areas updated, {fail_count} failed ({elapsed}s)")
-
-if __name__ == "__main__":
-    main()
+def update_listings_median(area_name, me
