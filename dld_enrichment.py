@@ -185,8 +185,8 @@ def main():
     print(f"DLD enrichment started at {start.isoformat()}")
 
     today = datetime.now()
-    to_date = today.strftime("%m/%d/%Y")
-    from_date = (today - timedelta(days=90)).strftime("%m/%d/%Y")
+    to_date = today.strftime("%d/%m/%Y")
+    from_date = (today - timedelta(days=90)).strftime("%d/%m/%Y")
     today_date = today.strftime("%Y-%m-%d")
 
     print(f"Date range: {from_date} to {to_date}\n")
