@@ -88,7 +88,7 @@ def safe_int(val):
 def safe_float(val):
     try:
         f = float(str(val).replace(",", "").strip())
-        return f if f < 100000000 else None  # guard against overflow
+        return f if f < 100000000 else None
     except:
         return None
 
@@ -111,8 +111,15 @@ def extract_listing(prop, area_name, listing_type):
     if not price or price <= 0:
         return None
 
-    images = p.get("images", [])
-    image_url = images[0].get("medium") if images else None
+    # Collect up to 10 images
+    raw_images = p.get("images", [])
+    all_images = []
+    for img in raw_images[:10]:
+        url = img.get("medium") or img.get("large") or img.get("small")
+        if url:
+            all_images.append(url)
+
+    image_url = all_images[0] if all_images else None
 
     details_path = p.get("details_path", "")
 
@@ -138,6 +145,7 @@ def extract_listing(prop, area_name, listing_type):
         "furnished":         safe_str(p.get("furnished")),
         "completion_status": completion_status,
         "image_url":         image_url,
+        "images":            all_images,
         "listing_type":      listing_type,
         "is_active":         True,
         "last_scraped":      datetime.now(timezone.utc).isoformat(),
@@ -196,9 +204,9 @@ def upsert_listings(listings):
 def log_run(total, status):
     try:
         supabase.table("scraper_runs").insert({
-            "status":       status,
+            "status":         status,
             "listings_found": total,
-            "finished_at":  datetime.now(timezone.utc).isoformat(),
+            "finished_at":    datetime.now(timezone.utc).isoformat(),
         }).execute()
     except Exception as e:
         print(f"Log run failed (non-fatal): {e}")
