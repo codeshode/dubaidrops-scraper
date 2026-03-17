@@ -43,6 +43,17 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.5",
 }
 
+# Keywords that identify the listing type from the URL path
+SALE_URL_KEYWORDS   = ["/buy/", "/for-sale/", "-for-sale-"]
+RENTAL_URL_KEYWORDS = ["/rent/", "/for-rent/", "-for-rent-"]
+
+# Non-Dubai locations to filter out (PropertyFinder injects these into Dubai results)
+EXCLUDED_LOCATIONS = [
+    "/abu-dhabi/", "/sharjah/", "/ajman/", "/ras-al-khaimah/",
+    "/fujairah/", "/umm-al-quwain/", "/al-ain/",
+]
+
+
 def fetch_page(area_id, listing_type_code, page=1):
     url = (
         f"https://www.propertyfinder.ae/en/search?"
@@ -76,21 +87,24 @@ def fetch_page(area_id, listing_type_code, page=1):
 
     try:
         return json.loads(html[bracket_start:i+1])
-    except:
+    except Exception:
         return []
+
 
 def safe_int(val):
     try:
         return int(str(val).strip()) if val not in [None, "", "Studio"] else (0 if val == "Studio" else None)
-    except:
+    except Exception:
         return None
+
 
 def safe_float(val):
     try:
         f = float(str(val).replace(",", "").strip())
-        return f if f < 100000000 else None
-    except:
+        return f if f < 100_000_000 else None
+    except Exception:
         return None
+
 
 def safe_str(val):
     if val is None:
@@ -98,6 +112,50 @@ def safe_str(val):
     if isinstance(val, dict):
         return val.get("slug") or val.get("name") or None
     return str(val).strip() or None
+
+
+def url_matches_listing_type(details_path, listing_type):
+    """
+    Validate that a listing's URL path matches the expected listing type.
+    PropertyFinder injects cross-type and cross-emirate listings into search
+    results pages. This filter discards those injected listings before they
+    reach the database.
+
+    Returns True if the listing should be KEPT, False if it should be discarded.
+    """
+    if not details_path:
+        # No URL at all — discard, we cannot verify the listing
+        return False
+
+    path = details_path.lower()
+
+    # Discard non-Dubai emirate listings injected into Dubai results
+    for excluded in EXCLUDED_LOCATIONS:
+        if excluded in path:
+            return False
+
+    # Validate listing type matches URL
+    if listing_type == "sale":
+        # Must contain a sale keyword; must NOT contain a rental keyword
+        has_sale_signal   = any(kw in path for kw in SALE_URL_KEYWORDS)
+        has_rental_signal = any(kw in path for kw in RENTAL_URL_KEYWORDS)
+        if has_rental_signal:
+            return False   # Rental URL injected into sale results
+        if not has_sale_signal:
+            # URL doesn't look like either — allow it through (edge case for new URL patterns)
+            pass
+
+    elif listing_type == "rental":
+        # Must contain a rental keyword; must NOT contain a sale keyword
+        has_rental_signal = any(kw in path for kw in RENTAL_URL_KEYWORDS)
+        has_sale_signal   = any(kw in path for kw in SALE_URL_KEYWORDS)
+        if has_sale_signal:
+            return False   # Sale URL injected into rental results
+        if not has_rental_signal:
+            pass  # Allow through
+
+    return True
+
 
 def extract_listing(prop, area_name, listing_type):
     p = prop.get("property", prop)
@@ -111,17 +169,23 @@ def extract_listing(prop, area_name, listing_type):
     if not price or price <= 0:
         return None
 
+    details_path = p.get("details_path", "")
+
+    # ---------------------------------------------------------------
+    # CORE FIX: validate URL matches expected listing type + location
+    # ---------------------------------------------------------------
+    if not url_matches_listing_type(details_path, listing_type):
+        return None
+
     # Collect up to 10 images
     raw_images = p.get("images", [])
     all_images = []
     for img in raw_images[:10]:
-        url = img.get("medium") or img.get("large") or img.get("small")
-        if url:
-            all_images.append(url)
+        url_img = img.get("medium") or img.get("large") or img.get("small")
+        if url_img:
+            all_images.append(url_img)
 
     image_url = all_images[0] if all_images else None
-
-    details_path = p.get("details_path", "")
 
     completion_raw = p.get("completion_status") or p.get("is_off_plan")
     if completion_raw is True:
@@ -151,9 +215,11 @@ def extract_listing(prop, area_name, listing_type):
         "last_scraped":      datetime.now(timezone.utc).isoformat(),
     }
 
+
 def scrape_area(area_name, area_id, listing_type, listing_type_code):
     print(f"Scraping {area_name} ({listing_type})...")
     all_listings = []
+    skipped = 0
     page = 1
 
     while True:
@@ -161,12 +227,16 @@ def scrape_area(area_name, area_id, listing_type, listing_type_code):
         if not props:
             break
 
+        page_kept = 0
         for prop in props:
             listing = extract_listing(prop, area_name, listing_type)
             if listing:
                 all_listings.append(listing)
+                page_kept += 1
+            else:
+                skipped += 1
 
-        print(f"  Page {page}: {len(props)} listings")
+        print(f"  Page {page}: {len(props)} raw | {page_kept} kept | {skipped} skipped total")
 
         if len(props) < 25:
             break
@@ -176,11 +246,13 @@ def scrape_area(area_name, area_id, listing_type, listing_type_code):
 
     return all_listings
 
+
 def deduplicate(listings):
     seen = {}
     for listing in listings:
         seen[listing["external_id"]] = listing
     return list(seen.values())
+
 
 def upsert_listings(listings):
     if not listings:
@@ -192,7 +264,7 @@ def upsert_listings(listings):
     batch_size = 50
     total = 0
     for i in range(0, len(listings), batch_size):
-        batch = listings[i:i+batch_size]
+        batch = listings[i:i + batch_size]
         supabase.table("listings").upsert(
             batch,
             on_conflict="external_id,source"
@@ -201,7 +273,26 @@ def upsert_listings(listings):
 
     return total
 
-def log_run(total, status):
+
+def mark_inactive_listings(active_external_ids):
+    """
+    Mark listings as inactive if they were not seen in today's scrape.
+    This handles listings that have been removed from PropertyFinder.
+    """
+    if not active_external_ids:
+        return
+
+    try:
+        # Mark all listings as inactive first
+        supabase.table("listings").update(
+            {"is_active": False}
+        ).not_.in_("external_id", active_external_ids).execute()
+        print(f"Marked listings not in today's scrape as inactive")
+    except Exception as e:
+        print(f"Mark inactive failed (non-fatal): {e}")
+
+
+def log_run(total, status, skipped=0):
     try:
         supabase.table("scraper_runs").insert({
             "status":         status,
@@ -210,6 +301,7 @@ def log_run(total, status):
         }).execute()
     except Exception as e:
         print(f"Log run failed (non-fatal): {e}")
+
 
 def main():
     start = datetime.now(timezone.utc)
@@ -225,12 +317,19 @@ def main():
 
         total = upsert_listings(all_listings)
         print(f"Upserted {total} listings")
+
+        # Mark any listings not seen today as inactive
+        active_ids = [l["external_id"] for l in all_listings]
+        mark_inactive_listings(active_ids)
+
         log_run(total, "success")
+        print(f"Scrape finished. Total: {total} listings upserted.")
 
     except Exception as e:
         print(f"Error: {e}")
         log_run(len(all_listings), "failed")
         raise
+
 
 if __name__ == "__main__":
     main()
