@@ -48,9 +48,11 @@ SALE_URL_KEYWORDS   = ["/buy/", "/for-sale/", "-for-sale-"]
 RENTAL_URL_KEYWORDS = ["/rent/", "/for-rent/", "-for-rent-"]
 
 # Non-Dubai locations to filter out (PropertyFinder injects these into Dubai results)
+# PropertyFinder uses both slash-delimited (/abu-dhabi/) and hyphen-delimited (-abu-dhabi-)
+# patterns in URLs, so we check for hyphen versions which match both
 EXCLUDED_LOCATIONS = [
-    "/abu-dhabi/", "/sharjah/", "/ajman/", "/ras-al-khaimah/",
-    "/fujairah/", "/umm-al-quwain/", "/al-ain/",
+    "-abu-dhabi-", "-sharjah-", "-ajman-", "-ras-al-khaimah-",
+    "-fujairah-", "-umm-al-quwain-", "-al-ain-",
 ]
 
 
