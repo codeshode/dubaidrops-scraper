@@ -276,35 +276,6 @@ def upsert_listings(listings):
     return total
 
 
-def mark_inactive_listings(active_external_ids):
-    """
-    Mark listings as inactive if they were not seen in today's scrape.
-    This handles listings that have been removed from PropertyFinder.
-    """
-    if not active_external_ids:
-        return
-
-    try:
-        # Mark all listings as inactive first
-        supabase.table("listings").update(
-            {"is_active": False}
-        ).not_.in_("external_id", active_external_ids).execute()
-        print(f"Marked listings not in today's scrape as inactive")
-    except Exception as e:
-        print(f"Mark inactive failed (non-fatal): {e}")
-
-
-def log_run(total, status, skipped=0):
-    try:
-        supabase.table("scraper_runs").insert({
-            "status":         status,
-            "listings_found": total,
-            "finished_at":    datetime.now(timezone.utc).isoformat(),
-        }).execute()
-    except Exception as e:
-        print(f"Log run failed (non-fatal): {e}")
-
-
 def main():
     start = datetime.now(timezone.utc)
     print(f"Scrape started at {start.isoformat()}")
@@ -319,10 +290,6 @@ def main():
 
         total = upsert_listings(all_listings)
         print(f"Upserted {total} listings")
-
-        # Mark any listings not seen today as inactive
-        active_ids = [l["external_id"] for l in all_listings]
-        mark_inactive_listings(active_ids)
 
         log_run(total, "success")
         print(f"Scrape finished. Total: {total} listings upserted.")
