@@ -24,8 +24,8 @@ TEST_AREAS = {
 }
 
 LISTING_TYPES = {
-    "sale":   2,
-    "rental": 1,
+    "sale":   1,
+    "rental": 2,
 }
 
 HEADERS = {
