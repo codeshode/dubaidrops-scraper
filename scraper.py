@@ -43,13 +43,9 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.5",
 }
 
-# Keywords that identify the listing type from the URL path
 SALE_URL_KEYWORDS   = ["/buy/", "/for-sale/", "-for-sale-"]
 RENTAL_URL_KEYWORDS = ["/rent/", "/for-rent/", "-for-rent-"]
 
-# Non-Dubai locations to filter out (PropertyFinder injects these into Dubai results)
-# PropertyFinder uses both slash-delimited (/abu-dhabi/) and hyphen-delimited (-abu-dhabi-)
-# patterns in URLs, so we check for hyphen versions which match both
 EXCLUDED_LOCATIONS = [
     "-abu-dhabi-", "-sharjah-", "-ajman-", "-ras-al-khaimah-",
     "-fujairah-", "-umm-al-quwain-", "-al-ain-",
@@ -117,44 +113,24 @@ def safe_str(val):
 
 
 def url_matches_listing_type(details_path, listing_type):
-    """
-    Validate that a listing's URL path matches the expected listing type.
-    PropertyFinder injects cross-type and cross-emirate listings into search
-    results pages. This filter discards those injected listings before they
-    reach the database.
-
-    Returns True if the listing should be KEPT, False if it should be discarded.
-    """
     if not details_path:
-        # No URL at all — discard, we cannot verify the listing
         return False
 
     path = details_path.lower()
 
-    # Discard non-Dubai emirate listings injected into Dubai results
     for excluded in EXCLUDED_LOCATIONS:
         if excluded in path:
             return False
 
-    # Validate listing type matches URL
     if listing_type == "sale":
-        # Must contain a sale keyword; must NOT contain a rental keyword
-        has_sale_signal   = any(kw in path for kw in SALE_URL_KEYWORDS)
         has_rental_signal = any(kw in path for kw in RENTAL_URL_KEYWORDS)
         if has_rental_signal:
-            return False   # Rental URL injected into sale results
-        if not has_sale_signal:
-            # URL doesn't look like either — allow it through (edge case for new URL patterns)
-            pass
+            return False
 
     elif listing_type == "rental":
-        # Must contain a rental keyword; must NOT contain a sale keyword
-        has_rental_signal = any(kw in path for kw in RENTAL_URL_KEYWORDS)
-        has_sale_signal   = any(kw in path for kw in SALE_URL_KEYWORDS)
+        has_sale_signal = any(kw in path for kw in SALE_URL_KEYWORDS)
         if has_sale_signal:
-            return False   # Sale URL injected into rental results
-        if not has_rental_signal:
-            pass  # Allow through
+            return False
 
     return True
 
@@ -173,13 +149,9 @@ def extract_listing(prop, area_name, listing_type):
 
     details_path = p.get("details_path", "")
 
-    # ---------------------------------------------------------------
-    # CORE FIX: validate URL matches expected listing type + location
-    # ---------------------------------------------------------------
     if not url_matches_listing_type(details_path, listing_type):
         return None
 
-    # Collect up to 10 images
     raw_images = p.get("images", [])
     all_images = []
     for img in raw_images[:10]:
@@ -274,6 +246,17 @@ def upsert_listings(listings):
         total += len(batch)
 
     return total
+
+
+def log_run(total, status):
+    try:
+        supabase.table("scraper_runs").insert({
+            "status":         status,
+            "listings_found": total,
+            "finished_at":    datetime.now(timezone.utc).isoformat(),
+        }).execute()
+    except Exception as e:
+        print(f"Log run failed (non-fatal): {e}")
 
 
 def main():
