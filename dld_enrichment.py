@@ -32,10 +32,19 @@ AREA_MAP = [
     {"area_name": "Jumeirah Village Circle",  "dld_area_id": "C-82"},
     {"area_name": "Palm Jumeirah",            "dld_area_id": "C-111"},
     {"area_name": "Jumeirah Beach Residence", "dld_area_id": "C-74"},
-    {"area_name": "Downtown Dubai",           "dld_area_id": "C-27"},
-    {"area_name": "Business Bay",             "dld_area_id": "C-9"},
-    {"area_name": "Jumeirah Lake Towers",     "dld_area_id": "C-76"},
+    {"area_name": "Downtown Dubai",           "dld_area_id": "C-18"},
+    {"area_name": "Business Bay",             "dld_area_id": "C-19"},
+    {"area_name": "Jumeirah Lake Towers",     "dld_area_id": "C-79"},
     {"area_name": "DAMAC Hills",              "dld_area_id": "C-26"},
+    {"area_name": "Arabian Ranches",          "dld_area_id": "C-9"},
+    {"area_name": "Mirdif",                   "dld_area_id": "A-232"},
+    {"area_name": "Al Barsha",                "dld_area_id": "A-368"},
+    {"area_name": "Dubai Silicon Oasis",      "dld_area_id": "C-119"},
+    {"area_name": "Motor City",               "dld_area_id": "C-104"},
+    {"area_name": "Dubai Creek Harbour",      "dld_area_id": "C-30"},
+    {"area_name": "Town Square",              "dld_area_id": "C-137"},
+    # Skipped (no Residential txns in DLD): DIFC, Zabeel, Bur Dubai.
+    # Their listings will keep dld_median_sqft = NULL.
 ]
 
 

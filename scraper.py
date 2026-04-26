@@ -31,6 +31,7 @@ AREAS = {
     "Motor City":               65,
     "Dubai Creek Harbour":      84,
     "Town Square":              131,
+    "DAMAC Hills":              129,
 }
 
 HEADERS = {
