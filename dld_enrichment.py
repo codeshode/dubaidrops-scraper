@@ -1,5 +1,4 @@
-import urllib.request
-import ssl
+import httpx
 import json
 import time
 import os
@@ -10,20 +9,21 @@ SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-DLD_BASE = "https://gateway.dubailand.gov.ae/open-data"
+DLD_URL = "https://gateway.dubailand.gov.ae/open-data/transactions"
+
+# Extracted from window.apiConfig on dubailand.gov.ae's open-data page.
+# This is the public consumer-id baked into the website itself, not a secret.
+DLD_CONSUMER_ID = "gkb3WvEG0rY9eilwXC0P2pTz8UzvLj9F"
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/121.0.0.0",
-    "Accept": "application/json, text/plain, */*",
-    "Content-Type": "application/json",
+    "Content-Type": "application/json; charset=utf-8",
+    "Accept": "application/json, */*",
+    "consumer-id": DLD_CONSUMER_ID,
     "Origin": "https://dubailand.gov.ae",
     "Referer": "https://dubailand.gov.ae/en/open-data/real-estate-data/",
 }
 
-ctx = ssl.create_default_context()
-ctx.check_hostname = False
-ctx.verify_mode = ssl.CERT_NONE
-
+# DLD-side area IDs differ from PropertyFinder's. Map them here.
 AREA_MAP = [
     {"area_name": "Dubai Marina",             "dld_area_id": "C-44"},
     {"area_name": "Dubai Hills Estate",       "dld_area_id": "C-35"},
@@ -39,45 +39,38 @@ AREA_MAP = [
 ]
 
 
-def fetch_dld_transactions(area_id_str, from_date, to_date, take=200):
-    payload = json.dumps({
+def fetch_dld_transactions(area_id_str, from_date, to_date, take=500):
+    payload = {
         "P_FROM_DATE": from_date,
         "P_TO_DATE": to_date,
+        "P_GROUP_ID": "",
+        "P_IS_OFFPLAN": "",
+        "P_IS_FREE_HOLD": "",
         "P_AREA_ID": area_id_str,
-        "P_USAGE_EN": "Residential",
-        "P_PROP_TYPE_EN": "",
-        "P_TAKE": take,
-        "P_SKIP": 0,
-        "LANG": "EN"
-    }).encode()
-
-    url = f"{DLD_BASE}/transactions"
-    req = urllib.request.Request(url, data=payload, headers=HEADERS, method="POST")
+        "P_USAGE_ID": "1",
+        "P_PROP_TYPE_ID": "",
+        "P_TAKE": str(take),
+        "P_SKIP": "0",
+        "P_SORT": "INSTANCE_DATE_DESC",
+    }
 
     try:
-        r = urllib.request.urlopen(req, timeout=15, context=ctx)
-        raw = r.read().decode("utf-8")
-        print(f"  Raw response preview: {raw[:200]}")
-        data = json.loads(raw)
-        print(f"  responseCode: {data.get('responseCode')}")
-        print(f"  Top-level keys: {list(data.keys())}")
+        resp = httpx.post(DLD_URL, headers=HEADERS, json=payload, timeout=20)
+        if resp.status_code != 200:
+            print(f"  HTTP {resp.status_code}: {resp.text[:300]}")
+            return []
+        data = resp.json()
+        rc = data.get("responseCode")
+        if rc != 200:
+            print(f"  responseCode={rc} errors={data.get('validationErrorsList')}")
+            return []
 
         response = data.get("response") or {}
         result = response.get("result") or []
-        if result:
-            print(f"  Found {len(result)} records in response.result")
-            return result
-
-        top_result = data.get("result") or []
-        if top_result:
-            print(f"  Found {len(top_result)} records in top-level result")
-            return top_result
-
-        print(f"  No result found. Response keys: {list(response.keys())}")
-        return []
+        return result
 
     except Exception as e:
-        print(f"  DLD fetch error: {e}")
+        print(f"  DLD fetch error: {type(e).__name__}: {e}")
         return []
 
 
@@ -100,19 +93,15 @@ def process_area(area_name, dld_area_id, from_date, to_date):
         print(f"  No transactions returned")
         return None
 
-    print(f"  Processing {len(transactions)} transactions")
-
-    if transactions:
-        print(f"  Sample keys: {list(transactions[0].keys())}")
-        print(f"  Sample record: {json.dumps(transactions[0])[:300]}")
+    print(f"  Got {len(transactions)} transactions")
 
     price_per_sqft_values = []
     price_per_sqm_values = []
 
     for t in transactions:
         try:
-            trans_value = float(t.get("TRANS_VALUE") or t.get("transValue") or 0)
-            actual_area = float(t.get("ACTUAL_AREA") or t.get("actualArea") or 0)
+            trans_value = float(t.get("TRANS_VALUE") or 0)
+            actual_area = float(t.get("ACTUAL_AREA") or 0)
             if trans_value > 0 and actual_area > 0:
                 price_per_sqm = trans_value / actual_area
                 price_per_sqft = price_per_sqm / 10.764
@@ -123,13 +112,13 @@ def process_area(area_name, dld_area_id, from_date, to_date):
             continue
 
     if not price_per_sqft_values:
-        print(f"  No valid sqft data found")
+        print(f"  No valid sqft data")
         return None
 
     median_sqft = round(calculate_median(price_per_sqft_values), 2)
     median_sqm = round(calculate_median(price_per_sqm_values), 2)
     avg_sqm = round(sum(price_per_sqm_values) / len(price_per_sqm_values), 2)
-    total_value = sum(float(t.get("TRANS_VALUE") or t.get("transValue") or 0) for t in transactions)
+    total_value = sum(float(t.get("TRANS_VALUE") or 0) for t in transactions)
 
     print(f"  Median: AED {median_sqft}/sqft from {len(price_per_sqft_values)} valid txns")
 
@@ -154,7 +143,7 @@ def get_area_id_from_db(area_name):
 
 def upsert_dld_benchmark(area_id, stats, today_date):
     try:
-        result = supabase.table("dld_benchmarks").upsert({
+        supabase.table("dld_benchmarks").upsert({
             "area_id": area_id,
             "property_type": "Residential",
             "beds": "All",
@@ -164,7 +153,7 @@ def upsert_dld_benchmark(area_id, stats, today_date):
             "avg_price_sqm": stats["avg_sqm"],
             "total_value_aed": stats["total_value"],
         }, on_conflict="area_id,property_type,beds,transaction_date").execute()
-        print(f"  Benchmark saved: {result.data}")
+        print(f"  Benchmark saved")
     except Exception as e:
         print(f"  Benchmark upsert failed: {e}")
 
@@ -185,8 +174,9 @@ def main():
     print(f"DLD enrichment started at {start.isoformat()}")
 
     today = datetime.now()
-    to_date = today.strftime("%d/%m/%Y")
-    from_date = (today - timedelta(days=90)).strftime("%d/%m/%Y")
+    # DLD wants MM/DD/YYYY (US format), confirmed by inspecting their public JS.
+    to_date = today.strftime("%m/%d/%Y")
+    from_date = (today - timedelta(days=90)).strftime("%m/%d/%Y")
     today_date = today.strftime("%Y-%m-%d")
 
     print(f"Date range: {from_date} to {to_date}\n")
