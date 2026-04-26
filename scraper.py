@@ -7,6 +7,8 @@ from supabase import create_client
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
+RAPIDAPI_KEY = os.environ["RAPIDAPI_KEY"]
+
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 AREAS = {
@@ -32,74 +34,54 @@ AREAS = {
     "Town Square":              131,
 }
 
-LISTING_TYPES = {
-    "sale":   1,
-    "rental": 2,
-}
-
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
+    "x-rapidapi-key": RAPIDAPI_KEY,
+    "x-rapidapi-host": "propertyfinder-uae-data.p.rapidapi.com",
 }
 
-SALE_URL_KEYWORDS   = ["/buy/", "/for-sale/", "-for-sale-"]
-RENTAL_URL_KEYWORDS = ["/rent/", "/for-rent/", "-for-rent-"]
-
-EXCLUDED_LOCATIONS = [
-    "-abu-dhabi-", "-sharjah-", "-ajman-", "-ras-al-khaimah-",
-    "-fujairah-", "-umm-al-quwain-", "-al-ain-",
-]
+BASE_URL = "https://propertyfinder-uae-data.p.rapidapi.com"
 
 
-def fetch_page(area_id, listing_type_code, page=1):
-    url = (
-        f"https://www.propertyfinder.ae/en/search?"
-        f"c={listing_type_code}&fu=0&ob=mr&page={page}&l={area_id}&rp=y"
-    )
+def get_today_listing_type():
+    """
+    Alternate sale/rental each day to stay within 700 free calls/month.
+    Even day = sale, Odd day = rental.
+    20 areas x 1 page = 20 calls/day = 600 calls/month.
+    """
+    day = datetime.now(timezone.utc).day
+    return "sale" if day % 2 == 0 else "rental"
+
+
+def fetch_page(area_id, listing_type, page=1):
+    endpoint = "search-buy" if listing_type == "sale" else "search-rent"
+    url = f"{BASE_URL}/{endpoint}?location_id={area_id}&page={page}"
+
     req = urllib.request.Request(url, headers=HEADERS)
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        html = resp.read().decode("utf-8")
-
-    marker = '"searchResult":'
-    start = html.find(marker)
-    if start == -1:
-        return []
-
-    props_marker = '"properties":'
-    props_start = html.find(props_marker, start)
-    if props_start == -1:
-        return []
-
-    bracket_start = html.find("[", props_start)
-    depth = 0
-    i = bracket_start
-    while i < len(html):
-        if html[i] == "[":
-            depth += 1
-        elif html[i] == "]":
-            depth -= 1
-            if depth == 0:
-                break
-        i += 1
-
     try:
-        return json.loads(html[bracket_start:i+1])
-    except Exception:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        if not data.get("success"):
+            print(f"    API returned success=false")
+            return []
+        return data.get("data", [])
+    except Exception as e:
+        print(f"    Fetch error: {e}")
         return []
-
-
-def safe_int(val):
-    try:
-        return int(str(val).strip()) if val not in [None, "", "Studio"] else (0 if val == "Studio" else None)
-    except Exception:
-        return None
 
 
 def safe_float(val):
     try:
         f = float(str(val).replace(",", "").strip())
-        return f if f < 100_000_000 else None
+        return f if 0 < f < 100_000_000 else None
+    except Exception:
+        return None
+
+
+def safe_int(val):
+    try:
+        if val in [None, "", "Studio"]:
+            return 0 if val == "Studio" else None
+        return int(str(val).strip())
     except Exception:
         return None
 
@@ -108,79 +90,66 @@ def safe_str(val):
     if val is None:
         return None
     if isinstance(val, dict):
-        return val.get("slug") or val.get("name") or None
+        return val.get("name") or val.get("slug") or None
     return str(val).strip() or None
 
 
-def url_matches_listing_type(details_path, listing_type):
-    if not details_path:
-        return False
-
-    path = details_path.lower()
-
-    for excluded in EXCLUDED_LOCATIONS:
-        if excluded in path:
-            return False
-
-    if listing_type == "sale":
-        has_rental_signal = any(kw in path for kw in RENTAL_URL_KEYWORDS)
-        if has_rental_signal:
-            return False
-
-    elif listing_type == "rental":
-        has_sale_signal = any(kw in path for kw in SALE_URL_KEYWORDS)
-        if has_sale_signal:
-            return False
-
-    return True
-
-
-def extract_listing(prop, area_name, listing_type):
-    p = prop.get("property", prop)
-
-    external_id = str(p.get("id", "")).strip()
+def extract_listing(item, area_name, listing_type):
+    external_id = str(item.get("property_id", "")).strip()
     if not external_id:
         return None
 
-    price_raw = p.get("price", {}).get("value", "0")
-    price = safe_float(str(price_raw).replace(",", "").replace("AED", "").strip())
-    if not price or price <= 0:
+    price_obj = item.get("price", {})
+    price_val = price_obj.get("value", 0) if isinstance(price_obj, dict) else price_obj
+    price = safe_float(price_val)
+    if not price:
         return None
 
-    details_path = p.get("details_path", "")
+    slug = item.get("slug") or item.get("details_path") or ""
+    if slug and not slug.startswith("http"):
+        source_url = "https://www.propertyfinder.ae" + slug
+    elif slug:
+        source_url = slug
+    else:
+        source_url = f"https://www.propertyfinder.ae/en/plp/{'buy' if listing_type == 'sale' else 'rent'}/{external_id}.html"
 
-    if not url_matches_listing_type(details_path, listing_type):
-        return None
-
-    raw_images = p.get("images", [])
+    raw_images = item.get("images", []) or []
     all_images = []
     for img in raw_images[:10]:
-        url_img = img.get("medium") or img.get("large") or img.get("small")
+        if isinstance(img, dict):
+            url_img = img.get("medium") or img.get("large") or img.get("small") or img.get("url")
+        elif isinstance(img, str):
+            url_img = img
+        else:
+            url_img = None
         if url_img:
             all_images.append(url_img)
-
     image_url = all_images[0] if all_images else None
 
-    completion_raw = p.get("completion_status") or p.get("is_off_plan")
-    if completion_raw is True:
+    completion_raw = item.get("completion_status") or item.get("is_off_plan")
+    if completion_raw is True or completion_raw == "off_plan":
         completion_status = "off-plan"
-    elif completion_raw is False:
+    elif completion_raw is False or completion_raw == "ready":
         completion_status = "ready"
     else:
         completion_status = None
 
+    prop_type = item.get("property_type")
+    if isinstance(prop_type, dict):
+        prop_type = prop_type.get("name") or prop_type.get("slug")
+
     return {
-        "external_id":       external_id + f"_{listing_type}",
+        "external_id":       f"{external_id}_{listing_type}",
         "source":            "propertyfinder",
-        "source_url":        "https://www.propertyfinder.ae" + details_path,
-        "title":             safe_str(p.get("title")) or "",
+        "source_url":        source_url,
+        "title":             safe_str(item.get("title")) or safe_str(item.get("name")) or "",
         "area_name":         area_name,
         "price_aed":         price,
-        "sqft":              safe_float(p.get("size", {}).get("value")),
-        "beds":              safe_int(p.get("bedrooms_value")),
-        "baths":             safe_int(p.get("bathrooms_value")),
-        "property_type":     safe_str(p.get("property_type")),
-        "furnished":         safe_str(p.get("furnished")),
+        "sqft":              safe_float(item.get("size") or item.get("area")),
+        "beds":              safe_int(item.get("bedrooms") or item.get("bedrooms_value")),
+        "baths":             safe_int(item.get("bathrooms") or item.get("bathrooms_value")),
+        "property_type":     safe_str(prop_type),
+        "furnished":         safe_str(item.get("furnished")),
         "completion_status": completion_status,
         "image_url":         image_url,
         "images":            all_images,
@@ -190,35 +159,21 @@ def extract_listing(prop, area_name, listing_type):
     }
 
 
-def scrape_area(area_name, area_id, listing_type, listing_type_code):
-    print(f"Scraping {area_name} ({listing_type})...")
-    all_listings = []
-    skipped = 0
-    page = 1
+def scrape_area(area_name, area_id, listing_type):
+    print(f"  {area_name} ({listing_type})...")
+    props = fetch_page(area_id, listing_type, 1)
+    if not props:
+        print(f"    No results")
+        return []
 
-    while True:
-        props = fetch_page(area_id, listing_type_code, page)
-        if not props:
-            break
+    listings = []
+    for item in props:
+        listing = extract_listing(item, area_name, listing_type)
+        if listing:
+            listings.append(listing)
 
-        page_kept = 0
-        for prop in props:
-            listing = extract_listing(prop, area_name, listing_type)
-            if listing:
-                all_listings.append(listing)
-                page_kept += 1
-            else:
-                skipped += 1
-
-        print(f"  Page {page}: {len(props)} raw | {page_kept} kept | {skipped} skipped total")
-
-        if len(props) < 25:
-            break
-
-        page += 1
-        time.sleep(1)
-
-    return all_listings
+    print(f"    {len(props)} raw | {len(listings)} kept")
+    return listings
 
 
 def deduplicate(listings):
@@ -231,20 +186,19 @@ def deduplicate(listings):
 def upsert_listings(listings):
     if not listings:
         return 0
-
     listings = deduplicate(listings)
     print(f"After dedup: {len(listings)} unique listings")
-
     batch_size = 50
     total = 0
     for i in range(0, len(listings), batch_size):
         batch = listings[i:i + batch_size]
-        supabase.table("listings").upsert(
-            batch,
-            on_conflict="external_id,source"
-        ).execute()
-        total += len(batch)
-
+        try:
+            supabase.table("listings").upsert(
+                batch, on_conflict="external_id,source"
+            ).execute()
+            total += len(batch)
+        except Exception as e:
+            print(f"  Upsert error: {e}")
     return total
 
 
@@ -261,21 +215,23 @@ def log_run(total, status):
 
 def main():
     start = datetime.now(timezone.utc)
-    print(f"Scrape started at {start.isoformat()}")
+    listing_type = get_today_listing_type()
+
+    print(f"Scrape started: {start.isoformat()}")
+    print(f"Listing type today: {listing_type.upper()}")
+    print(f"Areas: {len(AREAS)} | API calls: ~{len(AREAS)}")
+
     all_listings = []
 
     try:
-        for listing_type, listing_type_code in LISTING_TYPES.items():
-            for area_name, area_id in AREAS.items():
-                listings = scrape_area(area_name, area_id, listing_type, listing_type_code)
-                all_listings.extend(listings)
-                time.sleep(2)
+        for area_name, area_id in AREAS.items():
+            listings = scrape_area(area_name, area_id, listing_type)
+            all_listings.extend(listings)
+            time.sleep(1)
 
         total = upsert_listings(all_listings)
-        print(f"Upserted {total} listings")
-
+        print(f"\nDone. Upserted {total} {listing_type} listings.")
         log_run(total, "success")
-        print(f"Scrape finished. Total: {total} listings upserted.")
 
     except Exception as e:
         print(f"Error: {e}")
