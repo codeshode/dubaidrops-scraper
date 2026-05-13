@@ -1,7 +1,9 @@
 name: Daily Property Scraper
 on:
-  schedule:
-    - cron: '0 0 * * *'
+  # Cron paused until RapidAPI quota resets on 2026-05-26 (Apr 26 → May 26 cycle).
+  # After that date, uncomment the schedule line below to resume daily runs.
+  # schedule:
+  #   - cron: '0 0 * * *'
   workflow_dispatch:
 jobs:
   scrape:
@@ -22,6 +24,9 @@ jobs:
           RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
         run: python scraper.py
       - name: Run DLD enrichment
+        # Run even if the scraper step failed (e.g. RapidAPI 429 quota).
+        # DLD is independent and free — losing it because of RapidAPI would be silly.
+        if: always()
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}

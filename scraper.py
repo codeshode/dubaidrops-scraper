@@ -48,22 +48,45 @@ def get_today_listing_type():
     return "sale" if day % 2 == 0 else "rental"
 
 
+class QuotaExceeded(RuntimeError):
+    """RapidAPI returned 429 — monthly quota is exhausted."""
+
+
 def fetch_page(area_id, listing_type, page=1):
     endpoint = "search-buy" if listing_type == "sale" else "search-rent"
     url = f"{BASE_URL}/{endpoint}?location_id={area_id}&page={page}"
     try:
         resp = httpx.get(url, headers=HEADERS, timeout=20)
-        if resp.status_code != 200:
-            print(f"    HTTP {resp.status_code}: {resp.text[:200]}")
-            return []
-        data = resp.json()
-        if not data.get("success"):
-            print(f"    API returned success=false")
-            return []
-        return data.get("data", [])
     except Exception as e:
         print(f"    Fetch error: {type(e).__name__}: {e}")
         return []
+
+    # Log remaining quota whenever RapidAPI tells us
+    remaining = resp.headers.get("x-ratelimit-requests-remaining")
+    limit = resp.headers.get("x-ratelimit-requests-limit")
+    if remaining is not None:
+        print(f"    quota: {remaining}/{limit} remaining")
+
+    # 429 = monthly quota exhausted. Raise so the workflow fails loudly
+    # instead of silently storing empty days.
+    if resp.status_code == 429:
+        raise QuotaExceeded(
+            f"RapidAPI quota exhausted (HTTP 429). Body: {resp.text[:200]}"
+        )
+
+    if resp.status_code != 200:
+        print(f"    HTTP {resp.status_code}: {resp.text[:200]}")
+        return []
+
+    try:
+        data = resp.json()
+    except Exception as e:
+        print(f"    JSON parse error: {e}")
+        return []
+    if not data.get("success"):
+        print(f"    API returned success=false")
+        return []
+    return data.get("data", [])
 
 
 def safe_float(val):
