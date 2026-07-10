@@ -34,18 +34,42 @@ AREAS = {
     "DAMAC Hills":              129,
 }
 
+# Migrated 2026-07-09 from the retired propertyfinder-uae-data API to
+# happyendpoint's uae-real-estate-property. Same publisher, identical response
+# schema (verified: all 20 listing-level keys match), same endpoints
+# (/search-buy, /search-rent). The only material change is the BASIC-tier hard
+# cap dropping 700 -> 500 calls/month, which the 4-phase rotation below absorbs.
 HEADERS = {
     "x-rapidapi-key": RAPIDAPI_KEY,
-    "x-rapidapi-host": "propertyfinder-uae-data.p.rapidapi.com",
+    "x-rapidapi-host": "uae-real-estate-property.p.rapidapi.com",
 }
 
-BASE_URL = "https://propertyfinder-uae-data.p.rapidapi.com"
+BASE_URL = "https://uae-real-estate-property.p.rapidapi.com"
 
 
-def get_today_listing_type():
-    # Even day = sale, odd day = rental — keeps us under 700 free RapidAPI calls/month.
-    day = datetime.now(timezone.utc).day
-    return "sale" if day % 2 == 0 else "rental"
+def get_today_plan():
+    """
+    Pick which listing type + which half of the areas to scrape today.
+
+    The RapidAPI BASIC tier is a HARD 500 calls/month. We track 21 areas x 2
+    listing types = 42 area-type combos. Scraping all 21 areas of one type
+    every day would be 21 x 30 = 630 calls/month — over the cap. Instead each
+    daily run does HALF the areas for ONE type, on a 4-day rotation:
+
+        tm_yday % 4 == 0 -> sale,   first  half of areas
+        tm_yday % 4 == 1 -> rental, first  half of areas
+        tm_yday % 4 == 2 -> sale,   second half of areas
+        tm_yday % 4 == 3 -> rental, second half of areas
+
+    Over each 4-day cycle every area is refreshed for both sale and rental.
+    ~11 calls/day x 30 = ~330 calls/month, leaving ~170 of headroom under 500
+    for the occasional manual workflow_dispatch test. Something fresh lands
+    every single day, so the site's "updated daily" promise still holds.
+    """
+    phase = datetime.now(timezone.utc).timetuple().tm_yday % 4
+    listing_type = "sale" if phase % 2 == 0 else "rental"
+    take_first_half = phase < 2
+    return listing_type, take_first_half
 
 
 class QuotaExceeded(RuntimeError):
@@ -235,16 +259,24 @@ def log_run(total, status):
 
 def main():
     start = datetime.now(timezone.utc)
-    listing_type = get_today_listing_type()
+    listing_type, take_first_half = get_today_plan()
+
+    # Split the areas into two halves; the first half gets the extra area when
+    # the count is odd. Dict insertion order is stable (Python 3.7+), so the
+    # same areas always land in the same half.
+    area_items = list(AREAS.items())
+    mid = (len(area_items) + 1) // 2
+    todays_areas = area_items[:mid] if take_first_half else area_items[mid:]
 
     print(f"Scrape started: {start.isoformat()}")
     print(f"Listing type today: {listing_type.upper()}")
-    print(f"Areas: {len(AREAS)} | API calls: ~{len(AREAS)}")
+    print(f"Area half: {'first' if take_first_half else 'second'}")
+    print(f"Areas this run: {len(todays_areas)} of {len(AREAS)} | API calls: ~{len(todays_areas)}")
 
     all_listings = []
 
     try:
-        for area_name, area_id in AREAS.items():
+        for area_name, area_id in todays_areas:
             listings = scrape_area(area_name, area_id, listing_type)
             all_listings.extend(listings)
             time.sleep(1)
