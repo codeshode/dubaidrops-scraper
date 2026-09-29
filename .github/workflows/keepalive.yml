@@ -1,0 +1,30 @@
+name: Keepalive
+
+# GitHub auto-disables *scheduled* workflows after 60 days with no repo
+# commits (status: disabled_inactivity). That silently killed the Daily
+# Property Scraper on 2026-09-09. This job makes a tiny empty commit every
+# 10 days, which counts as repo activity and resets GitHub's 60-day clock
+# for ALL scheduled workflows here — including this one, so it's
+# self-sustaining. Pushes made with GITHUB_TOKEN don't trigger other
+# workflows, so this never fires the scraper.
+
+on:
+  schedule:
+    - cron: '0 3 */10 * *'   # every 10 days at 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4.2.2
+      - name: Empty commit to reset inactivity timer
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "chore: keepalive (reset workflow inactivity timer)"
+          git push
