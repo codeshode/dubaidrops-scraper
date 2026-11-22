@@ -128,8 +128,12 @@ def safe_float(val):
 
 def safe_int(val):
     try:
-        if val in [None, "", "Studio"]:
-            return 0 if val == "Studio" else None
+        if val in [None, ""]:
+            return None
+        # The API sends studios as lowercase "studio"; matching only "Studio"
+        # left every studio with no bed count.
+        if str(val).strip().lower() == "studio":
+            return 0
         return int(str(val).strip())
     except Exception:
         return None
@@ -143,6 +147,19 @@ def safe_str(val):
     return str(val).strip() or None
 
 
+def parse_sqft(item):
+    # The API returns size as {"value": 768, "unit": "sqft"}; reading it as a
+    # plain number left sqft blank on every listing.
+    size = item.get("size")
+    if isinstance(size, dict):
+        value = safe_float(size.get("value"))
+        if value and str(size.get("unit", "sqft")).lower() in ("sqm", "m2"):
+            value = round(value * 10.7639, 1)
+        if value:
+            return value
+    return safe_float(item.get("floor_plan_area"))
+
+
 def extract_listing(item, area_name, listing_type):
     external_id = str(item.get("property_id", "")).strip()
     if not external_id:
@@ -154,13 +171,12 @@ def extract_listing(item, area_name, listing_type):
     if not price:
         return None
 
-    slug = item.get("property_url") or item.get("slug") or item.get("details_path") or ""
-    if slug and not slug.startswith("http"):
-        source_url = "https://www.propertyfinder.ae" + slug
-    elif slug:
-        source_url = slug
-    else:
-        source_url = f"https://www.propertyfinder.ae/en/plp/{'buy' if listing_type == 'sale' else 'rent'}/{external_id}.html"
+    # Items without a URL are promoted project cards (UUID ids, no listed_date),
+    # not real listings. A guessed URL for them can only 404, so skip them.
+    slug = item.get("property_url") or ""
+    if not slug:
+        return None
+    source_url = slug if slug.startswith("http") else "https://www.propertyfinder.ae" + slug
 
     raw_images = item.get("images", []) or []
     all_images = []
@@ -194,7 +210,7 @@ def extract_listing(item, area_name, listing_type):
         "title":             safe_str(item.get("title")) or safe_str(item.get("name")) or "",
         "area_name":         area_name,
         "price_aed":         price,
-        "sqft":              safe_float(item.get("size") or item.get("area")),
+        "sqft":              parse_sqft(item),
         "beds":              safe_int(item.get("bedrooms") or item.get("bedrooms_value")),
         "baths":             safe_int(item.get("bathrooms") or item.get("bathrooms_value")),
         "property_type":     safe_str(prop_type),
