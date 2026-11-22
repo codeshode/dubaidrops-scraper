@@ -11,25 +11,30 @@ RAPIDAPI_KEY = os.environ["RAPIDAPI_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 AREAS = {
+    # Property Finder location_ids, verified 2026-11-22 against
+    # https://uaepropertyapi.com/documentation/location-ids. Before that, 11 of
+    # these were wrong (e.g. Downtown Dubai was 6 = all of Abu Dhabi, Arabian
+    # Ranches was 4 = all of Sharjah, Palm Jumeirah was 38 = Deira), so those
+    # areas showed listings from somewhere else entirely.
     "Dubai Marina":             50,
     "Dubai Hills Estate":       105,
     "Dubai Sports City":        55,
     "Al Barari":                12,
     "Zabeel":                   100,
-    "Downtown Dubai":           6,
-    "Business Bay":             119,
-    "Jumeirah Village Circle":  82,
-    "Jumeirah Lake Towers":     77,
-    "DIFC":                     28,
+    "Downtown Dubai":           41,
+    "Business Bay":             36,
+    "Jumeirah Village Circle":  73,
+    "Jumeirah Lake Towers":     71,
+    "DIFC":                     39,
     "Bur Dubai":                35,
-    "Palm Jumeirah":            38,
-    "Arabian Ranches":          4,
-    "Mirdif":                   63,
+    "Palm Jumeirah":            86,
+    "Arabian Ranches":          34,
+    "Mirdif":                   78,
     "Al Barsha":                13,
     "Dubai Silicon Oasis":      54,
-    "Jumeirah Beach Residence": 46,
-    "Motor City":               65,
-    "Dubai Creek Harbour":      84,
+    "Jumeirah Beach Residence": 67,
+    "Motor City":               80,
+    "Dubai Creek Harbour":      48,
     "Town Square":              131,
     "DAMAC Hills":              129,
 }
