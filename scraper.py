@@ -1,7 +1,7 @@
 import httpx
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from supabase import create_client
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
@@ -246,6 +246,29 @@ def upsert_listings(listings):
     return total
 
 
+# Listings PropertyFinder hasn't returned to us in this many days are treated
+# as gone. Nothing else ever flips is_active to false, so without this the
+# "active" set grew forever: dead links on the site, and homepage queries that
+# outgrew the anon statement timeout. Reversible: if a retired listing shows
+# up again, extract_listing() sets is_active back to True on upsert.
+STALE_AFTER_DAYS = 30
+
+
+def deactivate_stale():
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=STALE_AFTER_DAYS)).isoformat()
+    try:
+        res = (
+            supabase.table("listings")
+            .update({"is_active": False}, count="exact", returning="minimal")
+            .eq("is_active", True)
+            .lt("last_scraped", cutoff)
+            .execute()
+        )
+        print(f"Retired {res.count} listings not seen in {STALE_AFTER_DAYS} days.")
+    except Exception as e:
+        print(f"Stale-retire failed (non-fatal): {e}")
+
+
 def log_run(total, status):
     try:
         supabase.table("scraper_runs").insert({
@@ -283,6 +306,7 @@ def main():
 
         total = upsert_listings(all_listings)
         print(f"\nDone. Upserted {total} {listing_type} listings.")
+        deactivate_stale()
         log_run(total, "success")
 
     except Exception as e:
